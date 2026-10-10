@@ -14,6 +14,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
   :root{
+    --tf:brightness(.8) contrast(1.67); /* pekat: makin kecil brightness / makin besar contrast = makin hitam */
     --bg:#f6f8fc; --surface:#ffffff; --raise:#edf1f7; --line:#d4dce8;
     --text:#151b26; --muted:#465266;
     --a:#7aa2f7; --b:#e0af68;
@@ -69,9 +70,9 @@
     transform-origin:0 0;backface-visibility:hidden;
   }
   .page{contain:layout paint;margin:0 auto 12px;background:#fff;position:relative;box-shadow:0 0 2px rgba(23,35,55,.22)}
-  .page canvas{display:block;width:100%;height:100%;image-rendering:auto;filter:contrast(1.3)}
+  .page canvas{display:block;width:100%;height:100%;image-rendering:auto;filter:var(--tf)}
   body.pdfdark .page{background:#1f1f1f}
-  body.pdfdark .page canvas{filter:contrast(1.3) invert(.88) hue-rotate(180deg)}
+  body.pdfdark .page canvas{filter:var(--tf) invert(.88) hue-rotate(180deg)}
 
   .empty{
     position:absolute;inset:0;display:grid;place-content:center;gap:12px;text-align:center;color:var(--muted);
