@@ -1,4 +1,4 @@
-const V = 'pdfreader-v8';
+const V = 'pdfreader-v9';
 const CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 const INDEX = new URL('./index.html', self.location).href;
 const CORE = [INDEX, new URL('./manifest.webmanifest', self.location).href, new URL('./icon-192.png', self.location).href, new URL('./icon-512.png', self.location).href, CDN + 'pdf.min.js', CDN + 'pdf.worker.min.js'];
