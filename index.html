@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Pembaca 2 PDF</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#f6f8fc">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PDF Reader">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style>
+  :root{
+    --bg:#f6f8fc; --surface:#ffffff; --raise:#edf1f7; --line:#d4dce8;
+    --text:#151b26; --muted:#465266;
+    --a:#7aa2f7; --b:#e0af68;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{width:100%;height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
+  body{
+    width:100%;height:100vh;height:100dvh;
+    display:grid; grid-template-rows:1fr; overflow:hidden;
+    background:var(--bg); color:var(--text);
+    font:14px/1.4 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  button{font:inherit;color:inherit;cursor:pointer}
+  button:focus-visible,.viewer:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+
+  /* ---------- top bar (hidden for a clean, full-screen reader) ---------- */
+  #bar{display:none!important}
+  #bar-unused{
+    display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; justify-content:space-between;
+    padding:8px 12px; padding-top:max(8px,env(safe-area-inset-top));
+    background:var(--surface); border-bottom:1px solid var(--line); z-index:5;
+  }
+  .chips{display:flex;gap:6px;min-width:0}
+  .chip{
+    display:flex;align-items:center;gap:8px;max-width:230px;padding:6px 10px;
+    border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--muted);
+  }
+  .chip.on{color:var(--text);background:var(--raise);border-color:#cbd4e1}
+  .chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .dot.a{background:var(--a)} .dot.b{background:var(--b)}
+  .tools{display:flex;align-items:center;gap:6px}
+  .tools button{
+    min-width:32px;height:32px;padding:0 10px;border:1px solid var(--line);
+    border-radius:8px;background:transparent;
+  }
+  .tools button:hover,.chip:hover{background:var(--raise)}
+  .tools button[aria-pressed="true"]{background:var(--raise);border-color:#cbd4e1}
+  #pageInfo,#zVal{color:var(--muted);font-variant-numeric:tabular-nums;min-width:48px;text-align:center}
+
+  /* ---------- viewers ---------- */
+  #stage{position:relative;min-height:0}
+  .viewer{
+    position:absolute;inset:0;overflow:auto;background:#edf1f7;outline:none;overscroll-behavior:contain;
+    touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;scroll-behavior:auto;
+    visibility:hidden;opacity:0;transition:opacity .12s,visibility 0s .12s;
+    scrollbar-gutter:stable;
+  }
+  .viewer.on{visibility:visible;opacity:1;z-index:1;transition:opacity .15s,visibility 0s}
+  .pages{
+    width:max-content;min-width:100%;padding:12px 12px 96px;
+    transform-origin:0 0;backface-visibility:hidden;
+  }
+  .page{contain:layout paint;margin:0 auto 12px;background:#fff;position:relative;box-shadow:0 0 2px rgba(23,35,55,.22)}
+  .page canvas{display:block;width:100%;height:100%;image-rendering:auto;filter:contrast(1.3)}
+  body.pdfdark .page{background:#1f1f1f}
+  body.pdfdark .page canvas{filter:contrast(1.3) invert(.88) hue-rotate(180deg)}
+
+  .empty{
+    position:absolute;inset:0;display:grid;place-content:center;gap:12px;text-align:center;color:var(--muted);
+  }
+  .btn{
+    padding:9px 16px;border-radius:8px;border:1px solid #d3dbe7;background:var(--raise);color:var(--text);
+  }
+  .btn:hover{background:#e1e7f0}
+
+  /* ---------- welcome ---------- */
+  #welcome{
+    position:absolute;inset:0;z-index:3;background:var(--bg);
+    display:grid;place-content:center;justify-items:center;gap:22px;padding:24px;text-align:center;
+  }
+  #welcome h1{margin:0;font-size:clamp(22px,4vw,30px);font-weight:650;letter-spacing:-.01em}
+  #welcome p{margin:0;color:var(--muted);max-width:46ch}
+  .drops{display:grid;grid-template-columns:1fr 1fr;gap:14px;width:min(620px,92vw)}
+  .drop{
+    --c:var(--a);padding:28px 16px;border:2px dashed var(--c);border-radius:14px;background:transparent;
+    display:grid;gap:6px;justify-items:center;
+  }
+  .drop.b{--c:var(--b)}
+  .drop:hover{background:var(--surface)}
+  .drop .big{font-size:34px;font-weight:700;color:var(--c);line-height:1}
+  .drop .sub{color:var(--muted);font-size:13px}
+  @media (max-width:520px){.drops{grid-template-columns:1fr}}
+
+  #welcome>*{display:none}#welcome{cursor:pointer}
+
+  /* ---------- floating controls ---------- */
+  #floaters{
+    position:fixed!important;z-index:2147483647;
+    right:max(14px,env(safe-area-inset-right));
+    bottom:max(14px,env(safe-area-inset-bottom));
+    display:flex;align-items:center;gap:9px;
+    pointer-events:none;isolation:isolate;
+  }
+  #floaters button{
+    --c:var(--text);
+    position:relative;display:grid;place-items:center;flex:none;
+    width:46px;height:46px;padding:0;border:1px solid color-mix(in srgb,var(--c) 58%,transparent);
+    border-radius:50%;background:rgba(255,255,255,.96);color:var(--text);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    box-shadow:0 1px 4px rgba(30,45,70,.2);pointer-events:auto;
+    touch-action:manipulation;transform-origin:center;
+  }
+  #floaters button:hover{background:rgba(237,241,247,.99)}
+  #floaters button:active{transform:scale(.94)}
+  #floaters button svg{display:block;width:21px;height:21px;flex:none;stroke:var(--c)}
+  #fab{--c:var(--b)}
+  #fullscreenBtn{--c:var(--text)}
+  @media(max-width:520px){#floaters{gap:8px}#floaters button{width:44px;height:44px}}
+
+  /* ---------- misc ---------- */
+  #toast{
+    position:fixed;top:max(16px,env(safe-area-inset-top));left:50%;transform:translate(-50%,-12px);z-index:20;
+    padding:9px 16px;border-radius:8px;background:var(--raise);border:1px solid #d3dbe7;
+    opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;max-width:90vw;
+  }
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+  body.dragging::after{
+    content:"Lepas file PDF di sini";position:fixed;inset:10px;z-index:30;display:grid;place-content:center;
+    border:3px dashed var(--a);border-radius:16px;background:rgba(255,255,255,.90);color:var(--text);font-size:20px;
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header id="bar">
+  <div class="chips">
+    <button class="chip" data-slot="0" title="PDF A"><i class="dot a"></i><b>A</b><span class="nm"></span></button>
+    <button class="chip" data-slot="1" title="PDF B"><i class="dot b"></i><b>B</b><span class="nm"></span></button>
+  </div>
+  <div class="tools" id="tools" hidden>
+    <span id="pageInfo"></span>
+    <button id="zOut" title="Perkecil (-)" aria-label="Perkecil">−</button>
+    <span id="zVal">100%</span>
+    <button id="zIn" title="Perbesar (+)" aria-label="Perbesar">+</button>
+    <button id="theme" aria-pressed="true" title="Mode gelap untuk isi PDF">PDF gelap</button>
+    <button id="openActive" title="Ganti file di slot yang aktif">Ganti file</button>
+  </div>
+</header>
+
+<main id="stage">
+  <section class="viewer" data-slot="0" tabindex="0" aria-label="PDF A">
+    <div class="pages"></div>
+    <div class="empty"><span>PDF A belum dibuka</span><button class="btn" data-open="0">Buka PDF A</button></div>
+  </section>
+  <section class="viewer" data-slot="1" tabindex="0" aria-label="PDF B">
+    <div class="pages"></div>
+    <div class="empty"><span>PDF B belum dibuka</span><button class="btn" data-open="1">Buka PDF B</button></div>
+  </section>
+
+  <div id="welcome">
+    <h1>Buka dua PDF, pindah pakai satu tombol</h1>
+    <p>PDF ditampilkan dengan tema terang secara default. File dibaca di browser kamu saja, tidak diunggah ke mana-mana.</p>
+    <div class="drops">
+      <button class="drop a" data-open="0" data-drop="0"><span class="big">A</span><span>Pilih PDF pertama</span><span class="sub">atau seret ke sini</span></button>
+      <button class="drop b" data-open="1" data-drop="1"><span class="big">B</span><span>Pilih PDF kedua</span><span class="sub">atau seret ke sini</span></button>
+    </div>
+    <button class="btn" id="openBoth">Pilih 2 PDF sekaligus</button>
+  </div>
+</main>
+
+<div id="floaters" aria-label="Kontrol pembaca PDF">
+  <button id="fullscreenBtn" type="button" aria-label="Masuk fullscreen" title="Masuk fullscreen" aria-pressed="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+  </button>
+  <button id="fab" hidden type="button" aria-label="Pindah PDF" title="Pindah PDF (S)">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4 3 8l4 4M3 8h14M17 12l4 4-4 4M21 16H7"/></svg>
+  </button>
+</div>
+
+<input type="file" id="in0" accept="application/pdf,.pdf" hidden>
+<input type="file" id="in1" accept="application/pdf,.pdf" hidden>
+<input type="file" id="inBoth" accept="application/pdf,.pdf" multiple hidden>
+<div id="toast" role="status"></div>
+
+<script>
+(() => {
+  const VER = '3.11.174';
+  const CDN = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${VER}/`;
+  const $ = (s, r = document) => r.querySelector(s);
+
+  const slots = [0, 1].map(i => {
+    const viewer = $(`.viewer[data-slot="${i}"]`);
+    return {
+      i, key: 'AB'[i], name: '', pdf: null, pages: [], zoom: 1, scale: 1, io: null,
+      viewer, box: $('.pages', viewer), empty: $('.empty', viewer),
+      chip: $(`.chip[data-slot="${i}"]`), input: $(`#in${i}`)
+    };
+  });
+  let active = 0, libP = null;
+
+  /* ---------- util ---------- */
+  let tt;
+
+  // Dipanggil langsung dari interaksi pengguna agar memenuhi syarat Fullscreen API.
+  // Browser boleh menolak fullscreen; pembaca PDF tetap berfungsi normal.
+  function requestAppFullscreen() {
+    const root = document.documentElement;
+    if (document.fullscreenElement || typeof root.requestFullscreen !== 'function') return;
+    try {
+      const request = root.requestFullscreen({ navigationUI: 'hide' });
+      if (request && typeof request.catch === 'function') request.catch(() => {});
+    } catch (_) {
+      // Browser dapat menolak fullscreen tanpa interaksi pengguna.
+    }
+  }
+
+  // Coba fullscreen saat halaman dimuat. Chrome mungkin menolaknya sampai pengguna mengetuk tombol.
+  window.addEventListener('load', requestAppFullscreen, { once: true });
+  window.addEventListener('pointerdown', e => {
+    // Tombol fullscreen menangani permintaannya sendiri agar tidak terjadi dua permintaan bersamaan.
+    if (e.target && e.target.closest && e.target.closest('#fullscreenBtn')) return;
+    requestAppFullscreen();
+  }, { once: true, capture: true });
+
+  function fullscreenIsActive() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement || document.webkitIsFullScreen);
+  }
+
+  function refreshFullscreenButton() {
+    const btn = $('#fullscreenBtn');
+    const active = fullscreenIsActive();
+    btn.setAttribute('aria-pressed', String(active));
+    btn.setAttribute('aria-label', active ? 'Keluar dari fullscreen' : 'Masuk fullscreen');
+    btn.title = active ? 'Keluar dari fullscreen' : 'Masuk fullscreen';
+    btn.innerHTML = active
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4a2 2 0 0 1-2 2H3M15 3v4a2 2 0 0 0 2 2h4M3 15h4a2 2 0 0 1 2 2v4M21 15h-4a2 2 0 0 0-2 2v4"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
+  }
+
+  async function toggleFullscreen() {
+    if (fullscreenIsActive()) {
+      try {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      } catch (_) { toast('Tidak bisa keluar dari fullscreen. Coba tekan Esc.', 3500); }
+      return;
+    }
+
+    const root = document.documentElement;
+    const request = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (!request) {
+      toast('Fullscreen tidak didukung di mode browser ini. Coba buka halaman melalui HTTPS atau localhost.', 5000);
+      return;
+    }
+    try {
+      const result = root.requestFullscreen
+        ? root.requestFullscreen({ navigationUI: 'hide' })
+        : root.webkitRequestFullscreen();
+      if (result && typeof result.then === 'function') await result;
+    } catch (_) {
+      toast('Chrome menolak fullscreen otomatis. Ketuk ikon fullscreen sekali lagi atau buka file melalui HTTPS/localhost.', 5000);
+    }
+  }
+  document.addEventListener('fullscreenchange', refreshFullscreenButton);
+  document.addEventListener('webkitfullscreenchange', refreshFullscreenButton);
+
+  function toast(msg, ms = 2600) {
+    const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), ms);
+  }
+  const hideToast = () => $('#toast').classList.remove('show');
+
+  function loadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src; s.onload = res;
+      s.onerror = () => rej(new Error('Gagal memuat pdf.js (cek koneksi internet)'));
+      document.head.appendChild(s);
+    });
+  }
+  // worker di-fetch jadi blob supaya jalan juga kalau file dibuka lewat file://
+  function ensureLib() {
+    if (!libP) libP = (async () => {
+      await loadScript(CDN + 'pdf.min.js');
+      try {
+        const txt = await (await fetch(CDN + 'pdf.worker.min.js')).text();
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          URL.createObjectURL(new Blob([txt], { type: 'text/javascript' }));
+      } catch (e) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = CDN + 'pdf.worker.min.js';
+      }
+    })().catch(e => { libP = null; throw e; });
+    return libP;
+  }
+
+  /* ---------- pinch zoom khusus isi PDF di layar sentuh ---------- */
+  let pinchState = null, pinchFrame = 0, pinchPending = null;
+  function touchDistance(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+  function applyPinchZoom() {
+    pinchFrame = 0;
+    const state = pinchPending;
+    pinchPending = null;
+    if (!state || !state.slot) return;
+    // Selama jari masih bergerak, gunakan transform GPU yang ringan. Ukuran canvas
+    // dan halaman baru dihitung sekali ketika gesture selesai.
+    const ratio = state.currentZoom / state.zoom;
+    state.slot.box.style.transformOrigin = `${state.anchorX}px ${state.anchorY}px`;
+    state.slot.box.style.transform = `scale(${ratio})`;
+  }
+  function onIntersect(entries) {
+    for (const e of entries) {
+      const pg = e.target._pg;
+      if (!pg) continue;
+      if (e.isIntersecting) { pg.visible = true; render(pg.slot, pg); }
+      else { pg.visible = false; unrender(pg); }
+    }
+  }
+
+  async function render(slot, pg) {
+    // Resolusi lebih tinggi pada layar mobile agar tepi huruf PDF lebih tajam,
+    // tetapi batas luas/panjang canvas mencegah penggunaan memori berlebihan.
+    let requestedDpr = Math.min(window.devicePixelRatio || 1, window.innerWidth <= 760 ? 3 : 2);
+    if (slot.zoom > 1.2) requestedDpr = Math.min(requestedDpr, 1); // placeholder; yang tajam = tile HD
+    const cssScale = Math.max(slot.scale, 0.01);
+    const pixelBudget = window.innerWidth <= 760 ? 9_000_000 : 14_000_000;
+    const dprByArea = Math.sqrt(pixelBudget / (pg.w * pg.h * cssScale * cssScale));
+    const dprByEdge = 4096 / (Math.max(pg.w, pg.h) * cssScale);
+    const dpr = Math.max(0.75, Math.min(requestedDpr, dprByArea, dprByEdge));
+    const key = +(slot.scale * dpr).toFixed(4);
+    if (pg.renderedKey === key) return;
+    const token = ++pg.token;
+    if (pg.task) { try { pg.task.cancel(); } catch (_) {} }
+    const vp = pg.page.getViewport({ scale: slot.scale * dpr });
+    const off = document.createElement('canvas');
+    off.width = Math.floor(vp.width); off.height = Math.floor(vp.height);
+    const ctx = off.getContext('2d', { alpha: true, desynchronized: true });
+    const task = pg.page.render({ canvasContext: ctx, viewport: vp });
+    pg.task = task;
+    try { await task.promise; } catch (_) { return; }       // dibatalkan
+    if (token !== pg.token) return;
+    darken(off);
+    pg.canvas.replaceWith(off); pg.canvas = off;
+    pg.renderedKey = key;
+  }
+
+  function unrender(pg) {
+    dropTile(pg);
+    pg.token++;
+    if (pg.task) { try { pg.task.cancel(); } catch (_) {} pg.task = null; }
+    pg.canvas.width = pg.canvas.height = 0;
+    pg.renderedKey = null;
+  }
+
+  /* ---------- tile HD: render hanya area yang kelihatan, resolusi tinggi ---------- */
+  const DARKEN = 1; // jumlah pass penebalan; 0 = mati, 2 = lebih pekat lagi
+  function darken(c) {
+    if (!DARKEN) return;
+    const x = c.getContext('2d');
+    x.globalCompositeOperation = 'multiply';
+    for (let i = 0; i < DARKEN; i++) x.drawImage(c, 0, 0);
+    x.globalCompositeOperation = 'source-over';
+  }
+  function dropTile(pg) {
+    pg.ttoken++;
+    if (pg.ttask) { try { pg.ttask.cancel(); } catch (_) {} pg.ttask = null; }
+    if (pg.tile) { pg.tile.remove(); pg.tile = null; pg.tr = null; }
+  }
+  function rescaleTile(pg, ns) {
+    pg.ttoken++;
+    if (pg.ttask) { try { pg.ttask.cancel(); } catch (_) {} pg.ttask = null; }
+    if (!pg.tile || !pg.tr) return;
+    const k = ns / pg.tr.s, st = pg.tile.style;
+    for (const f of ['left', 'top', 'width', 'height']) st[f] = parseFloat(st[f]) * k + 'px';
+    const t = pg.tr;
+    pg.tr = { s: ns, x0: t.x0 * k, y0: t.y0 * k, x1: t.x1 * k, y1: t.y1 * k, stale: true };
+  }
+  function scheduleTiles(slot, delay = 50) {
+    clearTimeout(slot._tt);
+    slot._tt = setTimeout(() => tileRender(slot), delay);
+  }
+  async function renderTile(slot, pg, x0, y0, w, h, dpr) {
+    const token = ++pg.ttoken;
+    if (pg.ttask) { try { pg.ttask.cancel(); } catch (_) {} }
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    const vp = pg.page.getViewport({ scale: slot.scale * dpr, offsetX: -x0 * dpr, offsetY: -y0 * dpr });
+    const task = pg.page.render({ canvasContext: c.getContext('2d', { alpha: false }), viewport: vp, background: '#ffffff' });
+    pg.ttask = task;
+    try { await task.promise; } catch (_) { return; }
+    if (token !== pg.ttoken) return;
+    darken(c);
+    c.style.cssText = `position:absolute;left:${x0}px;top:${y0}px;width:${c.width / dpr}px;height:${c.height / dpr}px`;
+    if (pg.tile) pg.tile.replaceWith(c); else pg.wrap.appendChild(c);
+    pg.tile = c; pg.ttask = null;
+  }
+  function tileRender(slot) {
+    if (!slot.pdf || slot.i !== active) return;
+    if (slot.zoom < 1.2) { slot.pages.forEach(dropTile); return; }
+    const vr = slot.viewer.getBoundingClientRect();
+    const dprReq = Math.min(Math.max(window.devicePixelRatio || 1, 2), 4);
+    const mx = vr.width * 0.2, my = vr.height * 0.2;
+    for (const pg of slot.pages) {
+      const r = pg.wrap.getBoundingClientRect();
+      if (r.bottom < vr.top - my || r.top > vr.bottom + my || r.right < vr.left || r.left > vr.right) { if (pg.tile) dropTile(pg); continue; }
+      const vx0 = Math.max(0, vr.left - r.left), vy0 = Math.max(0, vr.top - r.top);
+      const vx1 = Math.min(r.width, vr.right - r.left), vy1 = Math.min(r.height, vr.bottom - r.top);
+      const t = pg.tr;
+      if (pg.tile && t && !t.stale && t.s === slot.scale && t.x0 <= vx0 && t.y0 <= vy0 && t.x1 >= vx1 && t.y1 >= vy1) continue; // masih cukup
+      const x0 = Math.floor(Math.max(0, vr.left - mx - r.left)), y0 = Math.floor(Math.max(0, vr.top - my - r.top));
+      const x1 = Math.ceil(Math.min(r.width, vr.right + mx - r.left)), y1 = Math.ceil(Math.min(r.height, vr.bottom + my - r.top));
+      const w = x1 - x0, h = y1 - y0;
+      if (w < 8 || h < 8) continue;
+      const dpr = Math.min(dprReq, Math.sqrt(8e6 / (w * h)), 4096 / Math.max(w, h));
+      pg.tr = { s: slot.scale, x0, y0, x1, y1 };
+      renderTile(slot, pg, x0, y0, w, h, dpr);
+    }
+  }
+
+  function layout(slot, preserveScroll = null) {
+    if (!slot.pages.length) return;
+    const v = slot.viewer;
+    const ratio = v.scrollTop / Math.max(1, v.scrollHeight);
+    const ratioX = v.scrollLeft / Math.max(1, v.scrollWidth);
+    const avail = Math.max(200, Math.min(v.clientWidth - 24, 1100));
+    slot.scale = (avail / slot.pages[0].w) * slot.zoom;
+    slot.pages.forEach(pg => rescaleTile(pg, slot.scale));
+    for (const pg of slot.pages) {
+      pg.wrap.style.width = (pg.w * slot.scale) + 'px';
+      pg.wrap.style.height = (pg.h * slot.scale) + 'px';
+    }
+    if (preserveScroll) {
+      v.scrollTop = Math.max(0, preserveScroll.top);
+      v.scrollLeft = Math.max(0, preserveScroll.left);
+    } else {
+      v.scrollTop = ratio * v.scrollHeight;
+      v.scrollLeft = ratioX * v.scrollWidth;
+    }
+    scheduleTiles(slot, 0);
+    const baseGo = () => { for (const pg of slot.pages) if (pg.visible) render(slot, pg); };
+    if (slot.zoom > 1.2) { clearTimeout(slot._bt); slot._bt = setTimeout(baseGo, 250); } else baseGo();
+  }
+
+  function resetSlot(slot) {
+    if (slot.io) slot.io.disconnect();
+    slot.pages.forEach(unrender);
+    if (slot.pdf) slot.pdf.destroy();
+    slot.box.innerHTML = '';
+    slot.pages = []; slot.pdf = null; slot.name = '';
+  }
+
+  async function loadFile(slot, file) {
+    toast(`Memuat ${file.name}…`, 60000);
+    try {
+      await ensureLib();
+      const data = new Uint8Array(await file.arrayBuffer());
+      const pdf = await pdfjsLib.getDocument({ data }).promise;
+      const raw = await Promise.all(Array.from({ length: pdf.numPages }, (_, k) => pdf.getPage(k + 1)));
+      resetSlot(slot);
+      slot.pdf = pdf; slot.name = file.name; slot.zoom = 1;
+      slot.io = new IntersectionObserver(onIntersect, { root: slot.viewer, rootMargin: window.innerWidth <= 760 ? '700px 0px' : '1200px 0px' });
+      const frag = document.createDocumentFragment();
+      slot.pages = raw.map((page, k) => {
+        const vp = page.getViewport({ scale: 1 });
+        const wrap = document.createElement('div');
+        wrap.className = 'page'; wrap.dataset.n = k + 1;
+        const canvas = document.createElement('canvas');
+        wrap.appendChild(canvas);
+        const pg = { slot, page, w: vp.width, h: vp.height, wrap, canvas, visible: false, renderedKey: null, task: null, token: 0, tile: null, tr: null, ttask: null, ttoken: 0 };
+        wrap._pg = pg;
+        frag.appendChild(wrap);
+        return pg;
+      });
+      slot.box.appendChild(frag);
+      slot.viewer.scrollTop = 0;
+      layout(slot);
+      slot.pages.forEach(pg => slot.io.observe(pg.wrap));
+      hideToast();
+      return true;
+    } catch (e) {
+      console.error(e);
+      toast(e && e.name === 'PasswordException'
+        ? 'PDF ini diberi password, belum didukung'
+        : (e && e.message) || `Gagal membuka ${file.name}`, 4000);
+      return false;
+    }
+  }
+
+  /* ---------- UI state ---------- */
+  function refreshUI() {
+    const any = slots.some(s => s.pdf);
+    $('#welcome').hidden = any;
+    $('#fab').hidden = !any;
+    $('#tools').hidden = !any;
+
+    slots.forEach(s => {
+      s.viewer.classList.toggle('on', s.i === active);
+      s.viewer.setAttribute('aria-hidden', s.i === active ? 'false' : 'true');
+      s.viewer.inert = s.i !== active;
+      s.chip.classList.toggle('on', s.i === active);
+      $('.nm', s.chip).textContent = s.name || 'belum dibuka';
+      s.empty.hidden = !!s.pdf;
+    });
+
+    const o = slots[1 - active];
+    const fab = $('#fab');
+    fab.style.setProperty('--c', o.i === 0 ? 'var(--a)' : 'var(--b)');
+    fab.setAttribute('aria-label', o.pdf ? `Pindah ke PDF ${o.key}: ${o.name}` : `Buka PDF ${o.key}`);
+    fab.title = o.pdf ? `Pindah ke PDF ${o.key} · ${o.name} (S)` : `Buka PDF ${o.key} (S)`;
+
+    refreshZoom(); updatePage(slots[active]);
+  }
+
+  function refreshZoom() {
+    $('#zVal').textContent = Math.round(slots[active].zoom * 100) + '%';
+  }
+
+  function updatePage(slot) {
+    if (slot.i !== active) return;
+    const n = slot.pages.length;
+    if (!n) { $('#pageInfo').textContent = ''; return; }
+    const y = slot.viewer.scrollTop + slot.viewer.clientHeight * 0.35;
+    let lo = 0, hi = n - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (slot.pages[mid].wrap.offsetTop <= y) lo = mid; else hi = mid - 1;
+    }
+    $('#pageInfo').textContent = `${lo + 1} / ${n}`;
+  }
+
+  function setActive(i) {
+    active = i;
+    refreshUI();
+    scheduleTiles(slots[i]);
+    slots[i].viewer.focus({ preventScroll: true });
+  }
+
+  function switchSlot() {
+    const o = 1 - active;
+    setActive(o);
+    if (!slots[o].pdf) {
+      requestAppFullscreen();
+      slots[o].input.click();
+    }
+  }
+
+  function zoomBy(d) {
+    const s = slots[active];
+    if (!s.pdf) return;
+    s.zoom = Math.min(5, Math.max(0.5, Math.round((s.zoom + d) * 100) / 100));
+    layout(s); refreshZoom();
+  }
+
+  /* ---------- file handling ---------- */
+  async function handleFiles(list, pref) {
+    // Fallback untuk file yang dijatuhkan ke halaman; pemanggilan utama dilakukan
+    // langsung dari klik tombol/pemilihan file agar izin fullscreen tidak kedaluwarsa.
+    requestAppFullscreen();
+    const pdfs = list.filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    if (!pdfs.length) { toast('Itu bukan file PDF'); return; }
+    let targets;
+    if (pdfs.length >= 2 && pref == null) {
+      targets = [[0, pdfs[0]], [1, pdfs[1]]];
+    } else {
+      const t = pref != null ? pref : (!slots[0].pdf ? 0 : !slots[1].pdf ? 1 : active);
+      targets = [[t, pdfs[0]]];
+    }
+    const ok = await Promise.all(targets.map(([i, f]) => loadFile(slots[i], f)));
+    const first = targets.find((_, k) => ok[k]);
+    if (first) {
+      setActive(first[0]);
+      requestAppFullscreen();
+    }
+  }
+
+  slots.forEach(s => {
+    s.input.addEventListener('change', e => {
+      // Coba juga di change: ada browser yang memberikan aktivasi pengguna di sini.
+      requestAppFullscreen();
+      const list = [...e.target.files]; e.target.value = '';
+      if (list.length) handleFiles(list, s.i);
+    });
+    s.chip.addEventListener('click', () => {
+      if (s.pdf) setActive(s.i); else { setActive(s.i); s.input.click(); }
+    });
+    s.viewer.addEventListener('scroll', () => {
+      if (s._raf) return;
+      s._raf = requestAnimationFrame(() => { s._raf = 0; updatePage(s); scheduleTiles(s); });
+    }, { passive: true });
+
+    s.viewer.addEventListener('touchstart', e => {
+      if (e.touches.length === 2) {
+        const rect = s.viewer.getBoundingClientRect();
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        s.box.style.willChange = 'transform';
+        pinchState = {
+          slot: s,
+          distance: Math.max(1, touchDistance(e.touches)),
+          zoom: s.zoom,
+          currentZoom: s.zoom,
+          startScrollLeft: s.viewer.scrollLeft,
+          startScrollTop: s.viewer.scrollTop,
+          anchorViewX: midX - rect.left,
+          anchorViewY: midY - rect.top,
+          anchorX: s.viewer.scrollLeft + midX - rect.left,
+          anchorY: s.viewer.scrollTop + midY - rect.top
+        };
+      }
+    }, { passive: true });
+    s.viewer.addEventListener('touchmove', e => {
+      if (e.touches.length !== 2 || !pinchState || pinchState.slot !== s) return;
+      e.preventDefault();
+      const distance = touchDistance(e.touches);
+      pinchState.currentZoom = Math.min(5, Math.max(0.5, pinchState.zoom * distance / pinchState.distance));
+      pinchPending = pinchState;
+      if (!pinchFrame) pinchFrame = requestAnimationFrame(applyPinchZoom);
+    }, { passive: false });
+    const endPinch = e => {
+      if (e.touches.length >= 2 || !pinchState || pinchState.slot !== s) return;
+      const state = pinchState;
+      pinchState = null;
+      if (pinchFrame) { cancelAnimationFrame(pinchFrame); pinchFrame = 0; }
+      pinchPending = state;
+      applyPinchZoom();
+
+      const finalZoom = state.currentZoom;
+      const zoomRatio = finalZoom / state.zoom;
+      s.zoom = finalZoom;
+      s.box.style.transform = '';
+      s.box.style.transformOrigin = '';
+      s.box.style.willChange = '';
+      layout(s, {
+        left: (state.startScrollLeft + state.anchorViewX) * zoomRatio - state.anchorViewX,
+        top: (state.startScrollTop + state.anchorViewY) * zoomRatio - state.anchorViewY
+      });
+      if (s.i === active) refreshZoom();
+    };
+    s.viewer.addEventListener('touchend', endPinch, { passive: true });
+    s.viewer.addEventListener('touchcancel', endPinch, { passive: true });
+  });
+
+  $('#inBoth').addEventListener('change', e => {
+    requestAppFullscreen();
+    const list = [...e.target.files]; e.target.value = '';
+    if (list.length) handleFiles(list, null);
+  });
+  $('#openBoth').addEventListener('click', () => {
+    requestAppFullscreen();
+    $('#inBoth').click();
+  });
+  document.querySelectorAll('[data-open]').forEach(b =>
+    b.addEventListener('click', () => {
+      requestAppFullscreen();
+      slots[+b.dataset.open].input.click();
+    }));
+  $('#openActive').addEventListener('click', () => slots[active].input.click());
+  $('#fullscreenBtn').addEventListener('click', toggleFullscreen);
+  $('#fab').addEventListener('click', switchSlot);
+  $('#zIn').addEventListener('click', () => zoomBy(0.1));
+  $('#zOut').addEventListener('click', () => zoomBy(-0.1));
+
+  // Mode terang PDF sebagai default. Preferensi lama dari versi sebelumnya tidak digunakan.
+  const themeBtn = $('#theme');
+  const THEME_KEY = 'pdfdark-light-default';
+  function setDark(on) {
+    document.body.classList.toggle('pdfdark', on);
+    themeBtn.setAttribute('aria-pressed', String(on));
+    try { localStorage.setItem(THEME_KEY, on ? '1' : '0'); } catch (_) {}
+  }
+  let saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+  setDark(saved === '1');
+  themeBtn.addEventListener('click', () => setDark(!document.body.classList.contains('pdfdark')));
+
+  // Tanpa UI depan: coba buka pemilih file saat halaman dibuka; kalau diblokir browser, ketuk layar di mana saja
+  $('#welcome').addEventListener('click', () => { requestAppFullscreen(); $('#inBoth').click(); });
+  addEventListener('load', () => { try { $('#inBoth').click(); } catch (_) {} }, { once: true });
+
+  // drag & drop di mana saja
+  let dragDepth = 0;
+  addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
+  addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+  addEventListener('dragover', e => e.preventDefault());
+  addEventListener('drop', e => {
+    e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+    requestAppFullscreen();
+    const card = e.target.closest && e.target.closest('[data-drop]');
+    handleFiles([...e.dataTransfer.files], card ? +card.dataset.drop : null);
+  });
+
+  // keyboard
+  addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFullscreen(); return; }
+    if (!slots.some(s => s.pdf)) return;
+    if (e.key === 's' || e.key === 'S') { e.preventDefault(); switchSlot(); }
+    else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomBy(0.1); }
+    else if (e.key === '-') { e.preventDefault(); zoomBy(-0.1); }
+  });
+
+  // resize
+  let rt;
+  addEventListener('resize', () => {
+    clearTimeout(rt);
+    rt = setTimeout(() => slots.forEach(layout), 150);
+  });
+
+  refreshUI();
+  refreshFullscreenButton();
+})();
+</script>
+<script>if ('serviceWorker' in navigator && location.protocol !== 'file:') addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));</script>
+</body>
+</html>
