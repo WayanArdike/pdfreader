@@ -1,22 +1,39 @@
-const V = 'pdfreader-v5';
+const V = 'pdfreader-v7';
 const CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
-const CORE = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', CDN + 'pdf.min.js', CDN + 'pdf.worker.min.js'];
+const INDEX = new URL('./index.html', self.location).href;
+const CORE = [INDEX, new URL('./manifest.webmanifest', self.location).href, new URL('./icon-192.png', self.location).href, new URL('./icon-512.png', self.location).href, CDN + 'pdf.min.js', CDN + 'pdf.worker.min.js'];
+
+// respons hasil redirect tidak boleh dipakai untuk navigasi -> bersihkan dulu
+async function clean(res) {
+  if (!res.redirected) return res;
+  return new Response(await res.blob(), { status: res.status, statusText: res.statusText, headers: res.headers });
+}
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(V).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
+  // satu file gagal (mis. CDN) tidak membatalkan instalasi
+  e.waitUntil((async () => {
+    const c = await caches.open(V);
+    await Promise.allSettled(CORE.map(async u => { const r = await fetch(u); if (r.ok) await c.put(u, await clean(r)); }));
+    await self.skipWaiting();
+  })());
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
-// cache dulu (instan/offline), lalu perbarui diam-diam di belakang
+
+// cache dulu (instan/offline), perbarui diam-diam di belakang; tidak pernah mengembalikan undefined
 self.addEventListener('fetch', e => {
   const r = e.request;
   if (r.method !== 'GET') return;
-  const u = new URL(r.url);
-  if (u.origin !== location.origin && !r.url.startsWith(CDN)) return;
-  e.respondWith(caches.open(V).then(async c => {
-    const hit = await c.match(r, { ignoreSearch: true });
-    const net = fetch(r.url.startsWith(CDN) ? r.url : r).then(res => { if (res.ok) c.put(r.url.startsWith(CDN) ? r.url : r, res.clone()); return res; }).catch(() => hit);
-    return hit || net;
-  }));
+  const u = new URL(r.url), cdn = r.url.startsWith(CDN);
+  if (u.origin !== self.location.origin && !cdn) return;
+  const nav = r.mode === 'navigate';
+  const key = nav ? INDEX : r.url;
+  e.respondWith((async () => {
+    const c = await caches.open(V);
+    const hit = await c.match(key, { ignoreSearch: true });
+    const upd = fetch(nav ? r : r.url).then(async res => { if (res.ok) await c.put(key, await clean(res.clone())); return res; }).catch(() => null);
+    if (hit) { e.waitUntil(upd); return hit; }
+    return (await upd) || Response.error();
+  })());
 });
