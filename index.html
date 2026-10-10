@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
   :root{
-    --tf:brightness(.8) contrast(1.67); /* pekat: makin kecil brightness / makin besar contrast = makin hitam */
+    --tf:contrast(1.3);
     --bg:#f6f8fc; --surface:#ffffff; --raise:#edf1f7; --line:#d4dce8;
     --text:#151b26; --muted:#465266;
     --a:#7aa2f7; --b:#e0af68;
@@ -331,7 +331,7 @@
     // Resolusi lebih tinggi pada layar mobile agar tepi huruf PDF lebih tajam,
     // tetapi batas luas/panjang canvas mencegah penggunaan memori berlebihan.
     let requestedDpr = Math.min(window.devicePixelRatio || 1, window.innerWidth <= 760 ? 3 : 2);
-    if (slot.zoom > 1.05) requestedDpr = Math.min(requestedDpr, 1); // placeholder; yang tajam = tile HD
+    if (slot.zoom > 1.2) requestedDpr = Math.min(requestedDpr, 1); // placeholder; yang tajam = tile HD
     const cssScale = Math.max(slot.scale, 0.01);
     const pixelBudget = window.innerWidth <= 760 ? 9_000_000 : 14_000_000;
     const dprByArea = Math.sqrt(pixelBudget / (pg.w * pg.h * cssScale * cssScale));
@@ -363,7 +363,7 @@
   }
 
   /* ---------- tile HD: render hanya area yang kelihatan, resolusi tinggi ---------- */
-  const DARKEN = 0; // jumlah pass penebalan; 0 = mati, 2 = lebih pekat lagi
+  const DARKEN = 1; // jumlah pass penebalan; 0 = mati, 2 = lebih pekat lagi
   function darken(c) {
     if (!DARKEN) return;
     const x = c.getContext('2d');
@@ -386,11 +386,8 @@
     pg.tr = { s: ns, x0: t.x0 * k, y0: t.y0 * k, x1: t.x1 * k, y1: t.y1 * k, stale: true };
   }
   function scheduleTiles(slot, delay = 50) {
-    clearTimeout(slot._tt); clearTimeout(slot._ut);
-    slot._tt = setTimeout(() => {
-      tileRender(slot);
-      slot._ut = setTimeout(() => tileRender(slot, true), 450); // ultra HD saat layar diam
-    }, delay);
+    clearTimeout(slot._tt);
+    slot._tt = setTimeout(() => tileRender(slot), delay);
   }
   async function renderTile(slot, pg, x0, y0, w, h, dpr) {
     const token = ++pg.ttoken;
@@ -409,7 +406,7 @@
   }
   function tileRender(slot, hq = false) {
     if (!slot.pdf || slot.i !== active) return;
-    if (slot.zoom < 1.05) { slot.pages.forEach(dropTile); return; }
+    if (slot.zoom < 1.2) { slot.pages.forEach(dropTile); return; }
     const vr = slot.viewer.getBoundingClientRect();
     const nat = Math.max(window.devicePixelRatio || 1, 2);
     const dprReq = hq ? Math.min(nat * 2, 6) : Math.min(nat, 4);
@@ -452,7 +449,7 @@
     }
     scheduleTiles(slot, 0);
     const baseGo = () => { for (const pg of slot.pages) if (pg.visible) render(slot, pg); };
-    if (slot.zoom > 1.05) { clearTimeout(slot._bt); slot._bt = setTimeout(baseGo, 250); } else baseGo();
+    if (slot.zoom > 1.2) { clearTimeout(slot._bt); slot._bt = setTimeout(baseGo, 250); } else baseGo();
   }
 
   function resetSlot(slot) {
